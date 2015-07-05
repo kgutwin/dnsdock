@@ -116,6 +116,12 @@ curl http://dnsdock.docker/services/serviceid -X PATCH --data-ascii '{"ttl": 0}'
 
 # set new default TTL value
 curl http://dnsdock.docker/set/ttl -X PUT --data-ascii '10'
+
+# resync a service with its Docker metadata
+curl http://dnsdock.docker/sync/serviceID -X POST
+
+# resync all services with their Docker metadata
+curl http://dnsdock.docker/sync -X POST
 ```
 
 
