@@ -11,12 +11,14 @@ type HTTPServer struct {
 	config *Config
 	list   ServiceListProvider
 	server *http.Server
+	docker *DockerManager
 }
 
-func NewHTTPServer(c *Config, list ServiceListProvider) *HTTPServer {
+func NewHTTPServer(c *Config, list ServiceListProvider, docker *DockerManager) *HTTPServer {
 	s := &HTTPServer{
 		config: c,
 		list:   list,
+		docker: docker,
 	}
 
 	router := mux.NewRouter()
@@ -27,6 +29,9 @@ func NewHTTPServer(c *Config, list ServiceListProvider) *HTTPServer {
 	router.HandleFunc("/services/{id}", s.removeService).Methods("DELETE")
 
 	router.HandleFunc("/set/ttl", s.setTTL).Methods("PUT")
+
+	router.HandleFunc("/sync", s.syncServices).Methods("POST")
+	router.HandleFunc("/sync/{id}", s.syncService).Methods("POST")
 
 	s.server = &http.Server{Addr: c.httpAddr, Handler: router}
 
@@ -176,4 +181,33 @@ func (s *HTTPServer) setTTL(w http.ResponseWriter, req *http.Request) {
 
 	s.config.ttl = value
 
+}
+
+func (s *HTTPServer) syncService(w http.ResponseWriter, req *http.Request) {
+	vars := mux.Vars(req)
+
+	id, ok := vars["id"]
+	if !ok {
+		http.Error(w, "ID required", http.StatusBadRequest)
+		return
+	}
+
+	service, err := s.docker.getService(id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	s.list.AddService(id, *service)
+}
+
+func (s *HTTPServer) syncServices(w http.ResponseWriter, req *http.Request) {
+	for id, _ := range s.list.GetAllServices() {
+		service, err := s.docker.getService(id)
+		if err == nil {
+			s.list.AddService(id, *service)
+		}
+		// ignore errors since not all services will map to
+		// docker containers
+	}
 }
