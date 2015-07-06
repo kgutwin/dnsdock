@@ -30,8 +30,8 @@ func NewHTTPServer(c *Config, list ServiceListProvider, docker *DockerManager) *
 
 	router.HandleFunc("/set/ttl", s.setTTL).Methods("PUT")
 
-	router.HandleFunc("/sync", s.syncServices).Methods("POST")
-	router.HandleFunc("/sync/{id}", s.syncService).Methods("POST")
+	router.HandleFunc("/reload", s.reloadServices).Methods("POST")
+	router.HandleFunc("/reload/{id}", s.reloadService).Methods("POST")
 
 	s.server = &http.Server{Addr: c.httpAddr, Handler: router}
 
@@ -185,7 +185,7 @@ func (s *HTTPServer) setTTL(w http.ResponseWriter, req *http.Request) {
 
 }
 
-func (s *HTTPServer) syncService(w http.ResponseWriter, req *http.Request) {
+func (s *HTTPServer) reloadService(w http.ResponseWriter, req *http.Request) {
 	vars := mux.Vars(req)
 
 	id, ok := vars["id"]
@@ -203,13 +203,33 @@ func (s *HTTPServer) syncService(w http.ResponseWriter, req *http.Request) {
 	s.list.AddService(id, *service)
 }
 
-func (s *HTTPServer) syncServices(w http.ResponseWriter, req *http.Request) {
-	for id, _ := range s.list.GetAllServices() {
-		service, err := s.docker.getService(id)
-		if err == nil {
-			s.list.AddService(id, *service)
+func (s *HTTPServer) reloadServices(w http.ResponseWriter, req *http.Request) {
+	deletes := make(map[string]bool)
+	for id, service := range s.list.GetAllServices() {
+		if !service.Manual {
+			deletes[id] = true
 		}
-		// ignore errors since not all services will map to
-		// docker containers
+	}
+
+	containers, err := s.docker.listContainers()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	for _, container := range containers {
+		deletes[container.Id] = false
+		service, err := s.docker.getService(container.Id)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		s.list.AddService(container.Id, *service)
+	}
+
+	for id, delete := range deletes {
+		if delete {
+			s.list.RemoveService(id)
+		}
 	}
 }
