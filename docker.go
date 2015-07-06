@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"errors"
 	"log"
 	"net"
@@ -17,8 +18,8 @@ type DockerManager struct {
 	docker *dockerclient.DockerClient
 }
 
-func NewDockerManager(c *Config, list ServiceListProvider) (*DockerManager, error) {
-	docker, err := dockerclient.NewDockerClient(c.dockerHost, nil)
+func NewDockerManager(c *Config, list ServiceListProvider, tlsConfig *tls.Config) (*DockerManager, error) {
+	docker, err := dockerclient.NewDockerClient(c.dockerHost, tlsConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -46,7 +47,10 @@ func (d *DockerManager) Start() error {
 			log.Println(err)
 			continue
 		}
-		d.list.AddService(container.Id, *service)
+		s, err := d.list.GetService(container.Id)
+		if err != nil || !s.Manual {
+			d.list.AddService(container.Id, *service)
+		}
 	}
 
 	return nil
@@ -71,7 +75,7 @@ func (d *DockerManager) getService(id string) (*Service, error) {
 		service.Image = ""
 	}
 	service.Name = cleanContainerName(inspect.Name)
-	service.Ip = net.ParseIP(inspect.NetworkSettings.IpAddress)
+	service.Ip = net.ParseIP(inspect.NetworkSettings.IPAddress)
 
 	service = overrideFromEnv(service, splitEnv(inspect.Config.Env))
 	if service == nil {
@@ -84,10 +88,14 @@ func (d *DockerManager) getService(id string) (*Service, error) {
 func (d *DockerManager) eventCallback(event *dockerclient.Event, ec chan error, args ...interface{}) {
 	//log.Printf("Received event: %#v %#v\n", *event, args)
 
+	s, s_err := d.list.GetService(event.Id)
+
 	switch event.Status {
 	case "die", "stop", "kill":
 		// Errors can be ignored here because there can be no-op events.
-		d.list.RemoveService(event.Id)
+		if s_err == nil && !s.Manual {
+			d.list.RemoveService(event.Id)
+		}
 	case "start", "restart":
 		service, err := d.getService(event.Id)
 		if err != nil {
@@ -95,7 +103,9 @@ func (d *DockerManager) eventCallback(event *dockerclient.Event, ec chan error, 
 			return
 		}
 
-		d.list.AddService(event.Id, *service)
+		if s_err != nil || !s.Manual {
+			d.list.AddService(event.Id, *service)
+		}
 	}
 }
 
