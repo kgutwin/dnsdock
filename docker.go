@@ -53,7 +53,7 @@ func (d *DockerManager) Start() error {
 }
 
 func (d *DockerManager) Update() error {
-	containers, err := d.docker.ListContainers(false, false, "")
+	containers, err := d.listContainers()
 	if err != nil {
 		return errors.New("Error connecting to docker socket: " + err.Error())
 	}
@@ -75,6 +75,10 @@ func (d *DockerManager) Update() error {
 
 func (d *DockerManager) Stop() {
 	d.docker.StopAllMonitorEvents()
+}
+
+func (d *DockerManager) listContainers() ([]dockerclient.Container, error) {
+	return d.docker.ListContainers(false, false, "")
 }
 
 func (d *DockerManager) getService(id string) (*Service, error) {
@@ -110,7 +114,9 @@ func (d *DockerManager) eventCallback(event *dockerclient.Event, ec chan error, 
 	switch event.Status {
 	case "die", "stop", "kill":
 		// Errors can be ignored here because there can be no-op events.
-		d.list.RemoveService(event.Id)
+		if s_err == nil && !s.Manual {
+			d.list.RemoveService(event.Id)
+		}
 	case "start", "restart":
 		service, err := d.getService(event.Id)
 		if err != nil {
